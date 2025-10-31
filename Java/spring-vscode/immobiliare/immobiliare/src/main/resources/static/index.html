@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Ricerca Immobili — Lista</title>
+  <!-- Tailwind via CDN for quick styling -->
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-gray-800">
+  <div class="max-w-7xl mx-auto p-6">
+    <header class="mb-6">
+      <h1 class="text-2xl font-semibold">Elenco Immobili</h1>
+      <p class="text-sm text-gray-600">I dati vengono caricati da <code class="bg-gray-100 px-1 rounded">/api/immobili</code> via <code>fetch()</code>.</p>
+    </header>
+
+    <section class="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div class="flex items-center gap-2">
+        <input id="search" type="search" placeholder="Cerca per città, titolo, indirizzo..." class="px-3 py-2 border rounded shadow-sm w-64" />
+        <select id="filterTipo" class="px-2 py-2 border rounded">
+          <option value="">Tutti i tipi</option>
+          <option value="APPARTAMENTO">Appartamento</option>
+          <option value="VILLA">Villa</option>
+          <option value="UFFICIO">Ufficio</option>
+          <option value="LOCALE">Locale</option>
+          <option value="TERRENO">Terreno</option>
+        </select>
+        <select id="filterStato" class="px-2 py-2 border rounded">
+          <option value="">Tutti</option>
+          <option value="VENDITA">Vendita</option>
+          <option value="AFFITTO">Affitto</option>
+        </select>
+        <button id="refreshBtn" class="ml-2 px-3 py-2 bg-blue-600 text-white rounded shadow-sm">Aggiorna</button>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <label class="text-sm text-gray-600">Mostra</label>
+        <select id="pageSize" class="px-2 py-2 border rounded">
+          <option value="10">10</option>
+          <option value="25">25</option>
+          <option value="50">50</option>
+        </select>
+      </div>
+    </section>
+
+    <main>
+      <div id="alert" class="hidden mb-4 p-3 rounded"></div>
+
+      <div class="overflow-x-auto bg-white rounded shadow">
+        <table id="immobiliTable" class="min-w-full text-sm">
+          <thead class="bg-gray-100 text-left">
+            <tr>
+              <th class="px-4 py-3">#</th>
+              <th class="px-4 py-3">Titolo</th>
+              <th class="px-4 py-3">Tipo</th>
+              <th class="px-4 py-3">Indirizzo</th>
+              <th class="px-4 py-3">Città</th>
+              <th class="px-4 py-3">Sup. (m²)</th>
+              <th class="px-4 py-3">Camere</th>
+              <th class="px-4 py-3">Bagni</th>
+              <th class="px-4 py-3">Prezzo</th>
+              <th class="px-4 py-3">Stato</th>
+              <th class="px-4 py-3">Inserito</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody" class="divide-y"></tbody>
+        </table>
+      </div>
+
+      <nav class="mt-4 flex items-center justify-between">
+        <div>
+          <button id="prevPage" class="px-3 py-2 border rounded mr-2">Precedente</button>
+          <button id="nextPage" class="px-3 py-2 border rounded">Successiva</button>
+        </div>
+        <div class="text-sm text-gray-600">Pagina <span id="pageInfo">1</span></div>
+      </nav>
+
+      <!-- Loading overlay -->
+      <div id="loading" class="fixed inset-0 bg-black/30 hidden items-center justify-center">
+        <div class="bg-white p-4 rounded shadow text-center">
+          <div class="animate-spin border-4 border-gray-200 rounded-full h-8 w-8 mb-3 border-t-blue-600"></div>
+          <div>Caricamento...</div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // ---------- Configurazione ----------
+    const API_URL = '/api/immobili'; // endpoint che fornisce un array di oggetti immobili
+
+    // ---------- Stato locale ----------
+    let allImmobili = []; // dati grezzi
+    let filtered = [];
+    let currentPage = 1;
+    let pageSize = Number(document.getElementById('pageSize').value) || 10;
+
+    // Mappa per mostrare valori leggibili degli enum, se necessario
+    const tipoMap = {
+      APPARTAMENTO: 'Appartamento',
+      VILLA: 'Villa',
+      UFFICIO: 'Ufficio',
+      LOCALE: 'Locale',
+      TERRENO: 'Terreno'
+    };
+
+    const statoMap = { VENDITA: 'Vendita', AFFITTO: 'Affitto' };
+
+    // ---------- Utility ----------
+    function formatPrice(v) {
+      if (v === null || v === undefined) return '-';
+      // se prezzo molto basso (affitto in euro mensile) verrà mostrato come numero
+      return Number(v).toLocaleString('it-IT', { style: 'currency', currency: 'EUR' });
+    }
+
+    function formatDate(isoOrDate) {
+      if (!isoOrDate) return '-';
+      const d = new Date(isoOrDate);
+      if (isNaN(d)) return isoOrDate;
+      return d.toLocaleDateString('it-IT');
+    }
+
+    function showLoading(show = true) {
+      document.getElementById('loading').classList.toggle('hidden', !show);
+    }
+
+    function showAlert(message, type = 'info') {
+      const el = document.getElementById('alert');
+      el.className = '';
+      el.classList.add('mb-4', 'p-3', 'rounded');
+      if (type === 'error') el.classList.add('bg-red-100', 'text-red-800');
+      else el.classList.add('bg-blue-100', 'text-blue-800');
+      el.textContent = message;
+      el.classList.remove('hidden');
+      setTimeout(() => el.classList.add('hidden'), 5000);
+    }
+
+    // ---------- Fetch dati ----------
+    async function fetchImmobili() {
+      showLoading(true);
+      try {
+        const res = await fetch(API_URL, { cache: 'no-store' });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status} - ${res.statusText}`);
+        }
+        const data = await res.json();
+        if (!Array.isArray(data)) throw new Error('Risposta API non è un array');
+
+        allImmobili = data;
+        applyFiltersAndRender();
+      } catch (err) {
+        console.error(err);
+        showAlert('Errore caricamento dati: ' + err.message, 'error');
+      } finally {
+        showLoading(false);
+      }
+    }
+
+    // ---------- Filtri, paginazione e render ----------
+    function applyFiltersAndRender() {
+      const search = document.getElementById('search').value.trim().toLowerCase();
+      const tipo = document.getElementById('filterTipo').value;
+      const stato = document.getElementById('filterStato').value;
+
+      filtered = allImmobili.filter(item => {
+        if (tipo && (item.tipo || '').toUpperCase() !== tipo) return false;
+        if (stato && (item.stato || '').toUpperCase() !== stato) return false;
+
+        if (!search) return true;
+        const hay = [item.titolo, item.indirizzo, item.citta, item.descrizione]
+          .filter(Boolean)
+          .join(' ').toLowerCase();
+        return hay.includes(search);
+      });
+
+      currentPage = 1; // reset pagina quando filtro cambia
+      renderTable();
+    }
+
+    function renderTable() {
+      pageSize = Number(document.getElementById('pageSize').value) || 10;
+      const tbody = document.getElementById('tableBody');
+      tbody.innerHTML = '';
+
+      const start = (currentPage - 1) * pageSize;
+      const pageItems = filtered.slice(start, start + pageSize);
+
+      if (pageItems.length === 0) {
+        tbody.innerHTML = `<tr><td class="px-4 py-6 text-center" colspan="11">Nessun risultato</td></tr>`;
+      } else {
+        for (const it of pageItems) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td class="px-4 py-3 font-medium">${escapeHtml(it.id)}</td>
+            <td class="px-4 py-3">${escapeHtml(it.titolo || '-')}</td>
+            <td class="px-4 py-3">${escapeHtml(tipoMap[it.tipo] || it.tipo || '-')}</td>
+            <td class="px-4 py-3">${escapeHtml(it.indirizzo || '-')}</td>
+            <td class="px-4 py-3">${escapeHtml(it.citta || '-')}</td>
+            <td class="px-4 py-3">${escapeHtml(it.superficie ?? '-')}</td>
+            <td class="px-4 py-3">${escapeHtml(it.camere ?? '-')}</td>
+            <td class="px-4 py-3">${escapeHtml(it.bagni ?? '-')}</td>
+            <td class="px-4 py-3">${escapeHtml(formatPrice(it.prezzo))}</td>
+            <td class="px-4 py-3">${escapeHtml(statoMap[it.stato] || it.stato || '-')}</td>
+            <td class="px-4 py-3">${escapeHtml(formatDate(it.data_inserimento || it.dataInserimento))}</td>
+          `;
+          tbody.appendChild(tr);
+        }
+      }
+
+      // Aggiorna info pagina e bottoni
+      document.getElementById('pageInfo').textContent = `${currentPage} / ${Math.max(1, Math.ceil(filtered.length / pageSize))}`;
+      document.getElementById('prevPage').disabled = currentPage === 1;
+      document.getElementById('nextPage').disabled = start + pageSize >= filtered.length;
+    }
+
+    // ---------- Eventi ----------
+    document.getElementById('search').addEventListener('input', debounce(() => applyFiltersAndRender(), 300));
+    document.getElementById('filterTipo').addEventListener('change', applyFiltersAndRender);
+    document.getElementById('filterStato').addEventListener('change', applyFiltersAndRender);
+    document.getElementById('pageSize').addEventListener('change', () => { currentPage = 1; renderTable(); });
+    document.getElementById('refreshBtn').addEventListener('click', fetchImmobili);
+
+    document.getElementById('prevPage').addEventListener('click', () => { if (currentPage>1) { currentPage--; renderTable(); } });
+    document.getElementById('nextPage').addEventListener('click', () => { const max = Math.ceil(filtered.length / pageSize); if (currentPage < max) { currentPage++; renderTable(); } });
+
+    // ---------- Helpers ----------
+    function escapeHtml(v) {
+      if (v === null || v === undefined) return '';
+      return String(v)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function debounce(fn, wait) {
+      let t;
+      return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); };
+    }
+
+    // ---------- Inizializzazione ----------
+    // Carica i dati all'apertura della pagina
+    fetchImmobili();
+
+    // Se vuoi testare senza API, decommenta e usa dati di esempio:
+    /*
+    allImmobili = [
+      { id:1, titolo:'Bilocale in centro', tipo:'APPARTAMENTO', indirizzo:'Via Roma 10', citta:'Torino', superficie:65, camere:2, bagni:1, prezzo:180000, stato:'VENDITA', data_inserimento:'2024-09-01' },
+      { id:2, titolo:'Villa con giardino', tipo:'VILLA', indirizzo:'Strada Collina 5', citta:'Moncalieri', superficie:250, camere:5, bagni:3, prezzo:450000, stato:'VENDITA', data_inserimento:'2024-08-15' }
+    ];
+    applyFiltersAndRender();
+    */
+  </script>
+</body>
+</html>
