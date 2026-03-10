@@ -1,0 +1,17 @@
+<h1>Negozio immobiliare</h1>
+<p>Lorem ipsum dolor sit amet consectetur adipisicing elit. Iure ratione tenetur enim ab cumque illo omnis beatae ipsam quo. Maxime suscipit illum commodi blanditiis, fugit odit nisi laudantium consequuntur quaerat.</p>
+
+<ul>
+    <li *ngFor="let immobile of listaImmobili">{{immobile}}</li>
+</ul>
+
+
+<div id="cards">
+<app-immobilecomp
+  *ngFor="let immobile of listaImmobiliVendita"
+  [immobile]="immobile">
+</app-immobilecomp>
+</div>
+
+
+
